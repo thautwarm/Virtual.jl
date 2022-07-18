@@ -2,11 +2,9 @@ module Virtual
 export @virtual, @override
 include("utils.jl")
 
-import Compat
 import Tricks
 @compile_only using MLStyle
 @compile_include "reflection.jl"
-
 
 import Serialization
 
