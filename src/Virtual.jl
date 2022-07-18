@@ -158,8 +158,8 @@ _mk_where(e, typars) = isempty(typars) ? e : Expr(:where, e, typars...)
 
 function _mk_virtual(__module__ :: Module, __source__ :: LineNumberNode, func_def::FuncInfo)
     func_def.name isa Undefined && throw(create_exception(__source__, "virtual function must have a name"))
-    isempty(func_def.kwPars) || throw(create_exception(__source__, "virtual function does not take keyword arguments"))
-    any(par.isVariadic for par in func_def.pars) && throw(create_exception(__source__, "virtual function does not take variadic arguments"))
+    isempty(func_def.kwPars) || throw(create_exception(__source__, "virtual function does not take keyword parameters"))
+    any(par.isVariadic for par in func_def.pars) && throw(create_exception(__source__, "virtual function does not take variadic parameters"))
     argtypes = [ _find_type(par.type) for par in func_def.pars ]
     arguments = [ Expr(:call, gen_wrap, partype, par.name) for (partype, par) in zip(argtypes, func_def.pars) ]
     argtypes = [ _find_type(par.type) for par in func_def.pars ]
@@ -211,6 +211,8 @@ end
 
 function _mk_override(__module__ :: Module, __source__ :: LineNumberNode, @nospecialize(func_def)) 
     func_def.name isa Undefined && throw(create_exception(__source__, "virtual function must have a name"))    
+    isempty(func_def.kwPars) || throw(create_exception(__source__, "virtual function does not take keyword parameters"))
+    any(par.isVariadic for par in func_def.pars) && throw(create_exception(__source__, "virtual function does not take variadic parameters"))
     argtypes = [ _find_type(par.type) for par in func_def.pars ]
     edge_def = replace_field(
         func_def,

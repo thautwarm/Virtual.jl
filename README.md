@@ -69,3 +69,40 @@ display(@benchmark(sum_score(dyn_func, animals)))
 The results are given as follow:
 
 ![](readme-fig.png)
+
+
+## Limitations
+
+1. `@override` methods must have a more specific signature than that of the default method. I'm planning to add checkers for this.
+
+
+    ```julia
+    # correct
+    @virtual f(x::Number, y::Number) = 0
+    
+    # wrong
+    @override f(x::Float64, y) = x * 3
+
+    # correct
+    @override f(x::Float64, y::Number) = x * 3
+    ```
+
+2. Variadic parameters and keyword parameters are not supported (default parameters are supported!)
+
+    ```julia
+    # wrong
+    @virtual g(x::Number; y::Number = 1) = y
+    ERROR: LoadError: virtual function does not take keyword parameters
+
+    # correct, using default parameters
+    @virtual g(x::Number, y::Number = 1) = y
+
+    # so far a strange behavior to use default parameters in virtual functions
+    @override g(x::Int, y::Int) = x + y
+
+    g(2)   # 2 + 1 => 3
+    g(2.0) # 1
+
+    @virtual h(xs...) = 1
+    ERROR: LoadError: virtual function does not take variadic parameters
+    ```
