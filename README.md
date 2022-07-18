@@ -77,13 +77,12 @@ The results are given as follow:
 
 
     ```julia
-    # correct
     @virtual f(x::Number, y::Number) = 0
     
-    # wrong
+    # wrong: Tuple{Float64, Any} <: Tuple{Number, Number} === false
     @override f(x::Float64, y) = x * 3
 
-    # correct
+    # correct: Tuple{Float64, Number} <: Tuple{Number, Number} === true
     @override f(x::Float64, y::Number) = x * 3
     ```
 
