@@ -38,7 +38,7 @@ struct Duck <: Animal end
             error("No default method for score!")
         end
 
-    const samples = Animal[Dog(), Duck(), Tiger()]
+    samples = Animal[Dog(), Duck(), Tiger()]
     animals = Animal[samples[rand(1:3)] for i = 1:100]
 
     function sum_score(score_func, xs::AbstractVector{Animal})
