@@ -1,6 +1,6 @@
 @compile_only using MLStyle
-
 struct Undefined end
+
 const NullSymbol = Union{Symbol, Undefined}
 const _undefined = Undefined()
 const PVec{T, N} = NTuple{N, T}

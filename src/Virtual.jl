@@ -2,12 +2,30 @@ module Virtual
 export @virtual, @override
 include("utils.jl")
 
+import Compat
 import Tricks
 @compile_only using MLStyle
 @compile_include "reflection.jl"
 
-# @compile_include "x.jl"
+
 import Serialization
+
+"""
+A reference to store non-concrete arguments.
+It helps to trigger code line and compilation of generated functions.
+(P.S: I'm sooooooooooooooo cool!)
+"""
+struct GenWrapper
+    refval :: Any
+end
+
+@inline function gen_wrap(::Type{T}, x) where T
+    isconcretetype(T) && return x
+    return GenWrapper(x)
+end
+
+@inline gen_unwrap(x::GenWrapper) = x.refval
+@inline gen_unwrap(x) = x
 
 function invoke_virt end
 
@@ -17,16 +35,6 @@ mutable struct DispatchTree
     type
     specialized::Vector{DispatchTree}
 end
-
-# function serialize_to_bytes(@nospecialize(d::DispatchTree))
-#     io = IOBuffer()
-#     Serialization.serialize(io, d)
-#     Tuple(take!(io))
-# end
-
-# function deserialize_from_bytes(@nospecialize(x::NTuple{N, UInt8})) where N
-#     Serialization.deserialize(IOBuffer(collect(x)))
-# end
 
 function split_sig(@nospecialize(t))
     typevars = Core.TypeVar[]
@@ -43,21 +51,21 @@ function split_sig(@nospecialize(t))
     return (n, tfunc, t)
 end
 
-function generate_call!(@nospecialize(pairs::Vector{<:Pair}), @nospecialize(dt::DispatchTree), @nospecialize(arg))
+function generate_call!(@nospecialize(pairs::Vector{<:Pair}), @nospecialize(dt::DispatchTree), @nospecialize(args))
     for spec in dt.specialized
-        generate_call!(pairs, spec, arg)
+        generate_call!(pairs, spec, args)
     end
     nargs = length(Base.unwrap_unionall(dt.type).parameters)
     cond = if dt.type isa DataType
         pars = collect(dt.type.parameters)
-        Expr(:(&&), [:($arg[$(i)] isa $(pars[i])) for i = 2:nargs]...)
+        Expr(:(&&), [:($(args[i]) isa $(pars[i])) for i = 2:nargs]...)
     else
+        arg = Expr(:tuple, args...)
         :($arg isa $(dt.type)) # generic
     end
     push!(
         pairs,
-        cond => :($unsafe_dispatch($(dt.type)).instance($([:($arg[$i]) for i = 2:nargs]...))))
-        # :($Base.invoke($invoke_virt, $(dt.type), $([:($arg[$i]) for i = 2:nargs]...))))
+        cond => :($unsafe_dispatch($(dt.type)).instance($([:($(args[i])) for i = 2:nargs]...))))
 end
 
 function generate_call(@nospecialize(dt::DispatchTree), @nospecialize(arg))
@@ -117,31 +125,27 @@ end
 
 @inline @generated function find_overrided_methods(_T::Type{T}) where T
     sigs = [split_sig(m.sig)[3] for m in Tricks._methods(typeof(invoke_virt), T)]
-    ci = Tricks.create_codeinfo_with_returnvalue([Symbol("#self#"), :f, :_T], [:T], (:T,), Signature{Tuple{sigs...}}())
-    # if isempty(sigs)
-    #     ci = Tricks.create_codeinfo_with_returnvalue([Symbol("#self#"), :f, :_T], [:T], (:T,), Val(nothing))
-    # else
-    #     ci = Tricks.create_codeinfo_with_returnvalue([Symbol("#self#"), :f, :_T], [:T], (:T,),
-    #         Val(serialize_to_bytes(create_dispatch_tree(sigs)))
-    #     )
-    # end
+    ci = Tricks.create_codeinfo_with_returnvalue([Symbol("#self#"), :_T], [:T], (:T,), QuoteNode(Val(Tuple{sigs...})))
     ci.edges = Tricks._method_table_all_edges_all_methods(typeof(invoke_virt), T)
     return ci
 end
 
-@inline @generated function apply_switch(::Signature{Tup}, arg) where Tup
+@inline @generated function apply_switch(::Val{Tup}, args::Vararg{Any,N}) where {Tup, N}
     sigs = collect(Tup.parameters)
-    init=:($error("method not found for " * $string(arg)))
+    init=:($error("method not found for " * $string(args)))
     if isempty(sigs)
         return init
     end
     dt = create_dispatch_tree(sigs)
-    pairs = generate_call(dt, :arg)
+    sym_args = [gensym("_arg$i") for i = 1:N]
+    
+    pairs = generate_call(dt, sym_args)
     ex = foldr(1:length(pairs), init=init) do l, r
         cond, invocation = pairs[l]
         head = l === 1 ? (:if) : (:elseif)
         Expr(head, cond, invocation, r)
     end
+    Expr(:block, [:($(sym_args[i]) = $gen_unwrap(args[$i])) for i = 1:length(sym_args)]..., ex)
 end
 
 const sym_selected_func = Symbol("Virtual::selected_func")
@@ -158,7 +162,8 @@ function _mk_virtual(__module__ :: Module, __source__ :: LineNumberNode, func_de
     func_def.name isa Undefined && throw(create_exception(__source__, "virtual function must have a name"))
     isempty(func_def.kwPars) || throw(create_exception(__source__, "virtual function does not take keyword arguments"))
     any(par.isVariadic for par in func_def.pars) && throw(create_exception(__source__, "virtual function does not take variadic arguments"))
-    arguments = [ par.name for par in func_def.pars ]
+    argtypes = [ _find_type(par.type) for par in func_def.pars ]
+    arguments = [ Expr(:call, gen_wrap, partype, par.name) for (partype, par) in zip(argtypes, func_def.pars) ]
     argtypes = [ _find_type(par.type) for par in func_def.pars ]
     arg = Expr(:tuple, func_def.name, arguments...)
     targ = Expr(:curly, Tuple, :($typeof($(func_def.name))), argtypes...)
@@ -169,7 +174,8 @@ function _mk_virtual(__module__ :: Module, __source__ :: LineNumberNode, func_de
             # Expr(:meta, :noinline),
             __source__,
             __source__,
-            :($apply_switch($find_overrided_methods($targ), $arg))))
+            :($sym_impl_func = $find_overrided_methods($targ)),
+            :(return $apply_switch($sym_impl_func, $(func_def.name), $(arguments...)))))
     
     edge_def = replace_field(
         func_def,
